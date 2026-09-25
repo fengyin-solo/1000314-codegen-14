@@ -1,4 +1,4 @@
-"""汇流箱管理接口：维护汇流箱，覆盖确认正常、登记支路异常、更换设备等动作。"""
+"""汇流箱管理接口：维护汇流箱，覆盖确认正常、登记支路异常、更换设备等动作，并支持支路异常定位。"""
 from __future__ import annotations
 
 from typing import Any
@@ -19,15 +19,26 @@ STATUSES = ["待巡检", "正常", "支路异常", "已更换"]
 @router.get("", response_model=PageResult[dict])
 def list_entries(
     keyword: str | None = Query(default=None, description="按汇流箱编号检索"),
+    array: str | None = Query(default=None, description="按所属方阵检索"),
     status: str | None = Query(default=None, description="待巡检、正常、支路异常、已更换"),
+    locate: bool = Query(default=False, description="跨方阵定位：放开方阵与状态限制，支路异常设备置顶"),
     page: int = 1,
     size: int = 20,
 ) -> PageResult[dict]:
-    """按汇流箱编号与状态过滤汇流箱管理列表；没有数据时返回空页，不报错。"""
+    """按汇流箱编号、方阵与状态过滤列表；支路异常设备置顶并按接入组串数、直流电压排序。"""
     if size > 200:
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
-    items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
+    items, total = service.list_entries(
+        keyword=keyword, array=array, status=status, locate=locate, page=page, size=size
+    )
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出汇流箱管理清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "combiner", "total": total, "items": items}
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -52,14 +63,7 @@ def create_entry(payload: EntryPayload) -> ActionResult:
 def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     """对单条汇流箱执行确认正常、登记支路异常、更换设备；不允许的动作会被拦下并说明原因。"""
     action = str(payload.values.get("action") or "").strip()
-    entry, message = service.run_action(entry_id, action)
+    entry, message = service.run_action(entry_id, action, payload.values)
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出汇流箱管理清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "combiner", "total": total, "items": items}
